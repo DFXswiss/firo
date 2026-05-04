@@ -1,0 +1,41 @@
+name: Build firod for ARM64
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [arm-build]
+    paths:
+      - 'Dockerfile'
+      - 'depends/**'
+      - '.github/workflows/dfx-arm-build.yml'
+
+env:
+  DOCKER_TAGS: dfxswiss/firod:0.14.15.3,dfxswiss/firod:latest
+
+jobs:
+  build-and-push:
+    name: Build firod ARM64
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.DOCKER_TAGS }}
+          platforms: linux/arm64
