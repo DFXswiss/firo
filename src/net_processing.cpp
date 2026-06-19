@@ -1193,14 +1193,17 @@ void static ProcessGetData(CNode* pfrom, const Consensus::Params& consensusParam
                     uint256 dandelionServiceDiscoveryHash;
                     dandelionServiceDiscoveryHash.SetHex(
                             "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
-                    if (txinfo.tx && !CNode::isDandelionInbound(pfrom) &&
-                            pfrom->setDandelionInventoryKnown.count(inv.hash) != 0) {                                
-                        connman.PushMessage(pfrom, msgMaker.Make(nSendFlags, NetMsgType::DANDELIONTX, *txinfo.tx));
-                        push = true;
-                    } else if (inv.hash == dandelionServiceDiscoveryHash &&
-                               pfrom->setDandelionInventoryKnown.count(inv.hash) != 0) {
-                        pfrom->fSupportsDandelion = true;
-                        push = true;
+                    {
+                        LOCK(pfrom->cs_inventory);
+                        if (txinfo.tx && !CNode::isDandelionInbound(pfrom) &&
+                                pfrom->filterDandelionInventoryKnown.contains(inv.hash)) {
+                            connman.PushMessage(pfrom, msgMaker.Make(nSendFlags, NetMsgType::DANDELIONTX, *txinfo.tx));
+                            push = true;
+                        } else if (inv.hash == dandelionServiceDiscoveryHash &&
+                                   pfrom->filterDandelionInventoryKnown.contains(inv.hash)) {
+                            pfrom->fSupportsDandelion = true;
+                            push = true;
+                        }
                     }
                 }
                 if (!push) {
@@ -1910,8 +1913,11 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
             }
 
             else if (inv.type == MSG_DANDELION_TX) {
-                auto result = pfrom->setDandelionInventoryKnown.insert(inv.hash);
-                fAlreadyHave = !result.second;
+                {
+                    LOCK(pfrom->cs_inventory);
+                    fAlreadyHave = pfrom->filterDandelionInventoryKnown.contains(inv.hash);
+                    pfrom->filterDandelionInventoryKnown.insert(inv.hash);
+                }
                 uint256 dandelionServiceDiscoveryHash;
                 dandelionServiceDiscoveryHash.SetHex(
                     "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
@@ -3167,6 +3173,9 @@ static bool SendRejectsAndCheckIfBanned(CNode* pnode, CConnman& connman)
         else if (pnode->fAddnode)
             LogPrintf("Warning: not punishing addnoded peer %s!\n", pnode->addr.ToString());
         else {
+            if (llmq::quorumSigSharesManager) {
+                llmq::quorumSigSharesManager->MarkNodeBanned(pnode->GetId());
+            }
             pnode->fDisconnect = true;
             if (pnode->addr.IsLocal())
                 LogPrintf("Warning: not banning local peer %s!\n", pnode->addr.ToString());
@@ -3611,10 +3620,10 @@ bool SendMessages(CNode* pto, CConnman& connman, const std::atomic<bool>& interr
 
             // Add Dandelion transactions
             for (const uint256& hash : pto->vInventoryDandelionTxToSend) {
-                pto->setDandelionInventoryKnown.insert(hash);
+                pto->filterDandelionInventoryKnown.insert(hash);
                 uint256 dandelionServiceDiscoveryHash;
                 dandelionServiceDiscoveryHash.SetHex(
-                    "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+                        "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
                 if (!pto->fSupportsDandelion && hash != dandelionServiceDiscoveryHash) {
                     //LogPrintf("Pushing transaction MSG_TX %s to %s.",
                     //          hash.ToString(), pto->addr.ToString());
