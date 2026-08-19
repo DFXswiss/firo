@@ -729,6 +729,17 @@ public:
      */
     mutable CCriticalSection cs_wallet;
 
+    /*
+     * Serializes the walletpassphrase RPC for this wallet, so that unlocking
+     * the wallet and scheduling the matching relock timer happen atomically
+     * with respect to other walletpassphrase calls.
+     *
+     * This must never be acquired while cs_wallet is held: it is held across
+     * RPCRunLater(), which blocks until a running relock callback has returned,
+     * and that callback acquires cs_wallet.
+     */
+    CCriticalSection cs_unlock;
+
     const std::string strWalletFile;
 
     void LoadKeyPool(int nIndex, const CKeyPool &keypool)
@@ -1011,6 +1022,12 @@ public:
             CAmount &fee,
             const CCoinControl *coinControl = NULL);
 
+    std::vector<CWalletTx> SpendAndStoreSparkSingleInput(
+            const std::vector<CRecipient>& recipients,
+            const std::vector<std::pair<spark::OutputCoinData, bool>>& privateRecipients,
+            CAmount& totalFee,
+            const CCoinControl* coinControl = NULL);
+
     bool CommitTransaction(CWalletTx& wtxNew, CReserveKey& reservekey, CConnman* connman, CValidationState& state, bool fCheckTransaction = false);
 
     bool CreateCollateralTransaction(CMutableTransaction& txCollateral, std::string& strReason);
@@ -1068,7 +1085,26 @@ public:
      */
     CAmount GetDebit(const CTxIn& txin, const CTransaction&tx, const isminefilter& filter) const;
     isminetype IsMine(const CTxOut& txout) const;
+    /**
+     * Determine ownership of an output using its containing transaction,
+     * avoiding a wallet-wide scan to recover the Spark serial context.
+     * @param[in] txout   Output to inspect
+     * @param[in] tx      Transaction containing txout
+     * @return Ownership flags for txout
+     * @pre txout is an output of tx
+     */
+    isminetype IsMine(const CTxOut& txout, const CTransaction& tx) const;
     CAmount GetCredit(const CTxOut& txout, const isminefilter& filter) const;
+    /**
+     * Return the credit of an output using its containing transaction,
+     * avoiding a wallet-wide scan to recover the Spark serial context.
+     * @param[in] txout   Output to inspect
+     * @param[in] tx      Transaction containing txout
+     * @param[in] filter  Ownership filter
+     * @return Credit amount if the output matches the filter, otherwise 0
+     * @pre txout is an output of tx
+     */
+    CAmount GetCredit(const CTxOut& txout, const CTransaction& tx, const isminefilter& filter) const;
     bool IsChange(const uint256& tx, const CTxOut& txout) const;
     CAmount GetChange(const uint256& tx, const CTxOut& txout) const;
     bool IsMine(const CTransaction& tx) const;
