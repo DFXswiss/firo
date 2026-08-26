@@ -27,12 +27,28 @@ jobs:
           deleted=0
           cutoff_epoch=$(($(date -u +%s) - 86400))
           while :; do
-            json=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100")
-            old_ids=$(printf '%s' "$json" | jq -r --argjson cutoff "$cutoff_epoch" '
-              .artifacts[]
-              | select((.created_at | fromdateiso8601) < $cutoff)
-              | .id
-            ')
+            page=1
+            old_ids=""
+            while :; do
+              json=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100&page=${page}")
+              page_old_ids=$(printf '%s' "$json" | jq -r --argjson cutoff "$cutoff_epoch" '
+                .artifacts[]
+                | select((.created_at | fromdateiso8601) < $cutoff)
+                | .id
+              ')
+              if [ -n "$page_old_ids" ]; then
+                if [ -n "$old_ids" ]; then
+                  old_ids="${old_ids}"$'\n'"${page_old_ids}"
+                else
+                  old_ids="${page_old_ids}"
+                fi
+              fi
+              page_count=$(printf '%s' "$json" | jq '.artifacts | length')
+              if [ "$page_count" -lt 100 ]; then
+                break
+              fi
+              page=$((page + 1))
+            done
             if [ -z "$old_ids" ]; then
               echo "Deleted ${deleted} artifacts older than 24 hours."
               break
@@ -49,8 +65,13 @@ jobs:
                   printf '%s\n' "$err" >&2
                   exit "$status"
                 fi
+              else
+                count=$((count + 1))
               fi
-              count=$((count + 1))
             done <<< "$old_ids"
             deleted=$((deleted + count))
+            if [ "$count" -eq 0 ]; then
+              echo "Deleted ${deleted} artifacts older than 24 hours."
+              break
+            fi
           done

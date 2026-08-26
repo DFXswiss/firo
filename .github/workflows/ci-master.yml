@@ -297,27 +297,6 @@ jobs:
         set -exo pipefail
         cp -rf build/bin/* build/src/
         qa/pull-tester/rpc-tests.py -extended
-    - name: Prepare Files for Artifact
-      run: |
-        set -exo pipefail
-        mkdir -p $ARTIFACT_DIR
-        mv build/bin/firo-cli${{ matrix.bin_ext }} build/bin/firo-tx${{ matrix.bin_ext }} build/bin/firod${{ matrix.bin_ext }} build/bin/firo-qt${{ matrix.bin_ext }} $ARTIFACT_DIR
-    - name: Prepare Test Logs for Artifact
-      if: failure() && matrix.is_linux
-      run: |
-        set -exo pipefail
-        tor_log=$(find . -path '*/tor/test-suite.log' -type f 2>/dev/null | head -n1)
-        firo_log=$(find . -path '*/src/test-suite.log' -type f 2>/dev/null | head -n1)
-
-        mkdir -p $TEST_LOG_ARTIFACT_DIR
-
-        if [ -n "$tor_log" ] && [ -f "$tor_log" ]; then
-          mv "$tor_log" "$TEST_LOG_ARTIFACT_DIR/tor.log"
-        fi
-
-        if [ -n "$firo_log" ] && [ -f "$firo_log" ]; then
-          mv "$firo_log" "$TEST_LOG_ARTIFACT_DIR/firo.log"
-        fi
 
   guix-build:
     needs: get-commit-hash
