@@ -277,6 +277,7 @@ void OverviewPage::on_anonymizeButton_clicked()
     amountDialog.setWindowTitle(tr("Make Funds Private"));
 
     auto layout = new QVBoxLayout(&amountDialog);
+    layout->setSizeConstraint(QLayout::SetFixedSize);
     auto description = new QLabel(
         tr("Move FIRO from your transparent balance into Spark, Firo's private balance."),
         &amountDialog);
@@ -327,7 +328,7 @@ void OverviewPage::on_anonymizeButton_clicked()
         amountDialog.accept();
     });
 
-    auto errorDetails = [this, unit](const WalletModel::SendCoinsReturn& result) {
+    auto errorDetails = [unit](const WalletModel::SendCoinsReturn& result) {
         switch (result.status) {
         case WalletModel::AmountExceedsBalance:
             return tr("The amount exceeds your available transparent balance.");
@@ -442,7 +443,7 @@ void OverviewPage::on_anonymizeButton_clicked()
             QMessageBox error(
                 QMessageBox::Critical,
                 tr("Unable to Make Funds Private"),
-                transactionsAndFees.size() > 1
+                sendResult.partiallyCommitted
                     ? tr("The transfer could not be fully completed. Part of it may already have been sent; check the Transactions tab before trying again.")
                     : tr("The transfer could not be completed. No funds were moved."),
                 QMessageBox::Ok,
