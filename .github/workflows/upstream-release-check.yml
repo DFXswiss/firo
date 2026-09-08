@@ -110,8 +110,8 @@ jobs:
           if [ "$not_contained_count" -eq 0 ]; then
             tag_name=$(printf '%s' "$marker_releases" | jq -r 'sort_by(.published_at) | reverse | .[0].tag_name')
             echo "Fork already contains upstream release ${tag_name} on develop and main."
-            existing_numbers=$(gh api "repos/${{ github.repository }}/issues?state=open&per_page=100" \
-              | jq -r --arg prefix "$title_prefix" '[.[] | select(has("pull_request") | not) | select(.title | startswith($prefix))] | .[].number')
+            existing_numbers=$(gh api --paginate --slurp "repos/${{ github.repository }}/issues?state=open&per_page=100" \
+              | jq -r --arg prefix "$title_prefix" 'add | [.[] | select(has("pull_request") | not) | select(.user.login == "github-actions[bot]") | select(.title | startswith($prefix))] | .[].number')
             if [ -n "$existing_numbers" ]; then
               while IFS= read -r existing_number; do
                 [ -n "$existing_number" ] || continue
@@ -162,8 +162,8 @@ jobs:
             issue_body+="A lagging main means the published image does not yet contain the release."
           fi
 
-          existing_number=$(gh api "repos/${{ github.repository }}/issues?state=open&per_page=100" \
-            | jq --arg prefix "$title_prefix" '[.[] | select(has("pull_request") | not) | select(.title | startswith($prefix))] | .[0].number // empty')
+          existing_number=$(gh api --paginate --slurp "repos/${{ github.repository }}/issues?state=open&per_page=100" \
+            | jq --arg prefix "$title_prefix" 'add | [.[] | select(has("pull_request") | not) | select(.user.login == "github-actions[bot]") | select(.title | startswith($prefix))] | .[0].number // empty')
 
           if [ -n "$existing_number" ]; then
             gh api -X PATCH "repos/${{ github.repository }}/issues/${existing_number}" \
