@@ -54,7 +54,8 @@ jobs:
             height_status=$?
             set -e
             if [ "$height_status" -eq 0 ]; then
-              cand_deadline_height=$(printf '%s' "$height_match" | grep -oE '[0-9][0-9,.]*' | tr -d ',.' | head -n1)
+              cand_deadline_height=$(printf '%s' "$height_match" | grep -oE '[0-9][0-9,.]*' | tr -d ',.')
+              cand_deadline_height=${cand_deadline_height%%$'\n'*}
             elif [ "$height_status" -ne 1 ]; then
               exit "$height_status"
             fi
