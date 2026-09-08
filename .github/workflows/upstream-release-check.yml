@@ -13,6 +13,10 @@ permissions:
   contents: read
   issues: write
 
+concurrency:
+  group: upstream-release-check
+  cancel-in-progress: false
+
 jobs:
   check:
     name: Check upstream consensus deadline
@@ -27,12 +31,7 @@ jobs:
 
           releases_json=$(gh api "repos/firoorg/firo/releases?per_page=100")
 
-          tag_name=""
-          html_url=""
-          published_at=""
-          deadline_height=""
-          is_hard_fork=0
-          found=0
+          marker_releases="[]"
 
           release_count=$(printf '%s' "$releases_json" | jq 'length')
           idx=0
@@ -67,46 +66,77 @@ jobs:
               continue
             fi
 
-            tag_name=$(printf '%s' "$release_json" | jq -r '.tag_name')
-            html_url=$(printf '%s' "$release_json" | jq -r '.html_url')
-            published_at=$(printf '%s' "$release_json" | jq -r '.published_at')
-            deadline_height=$cand_deadline_height
-            is_hard_fork=$cand_is_hard_fork
-            found=1
-            break
+            cand_entry=$(printf '%s' "$release_json" | jq -c \
+              --arg height "$cand_deadline_height" \
+              --argjson hf "$cand_is_hard_fork" \
+              '{tag_name: .tag_name, html_url: .html_url, published_at: .published_at, deadline_height: $height, is_hard_fork: $hf}')
+            marker_releases=$(printf '%s' "$marker_releases" | jq -c --argjson entry "$cand_entry" '. + [$entry]')
           done
 
-          if [ "$found" -eq 0 ]; then
+          marker_count=$(printf '%s' "$marker_releases" | jq 'length')
+          if [ "$marker_count" -eq 0 ]; then
             echo "No consensus deadline marker in recent upstream releases."
             exit 0
           fi
 
-          commit_sha=$(gh api "repos/firoorg/firo/commits/${tag_name}" --jq '.sha')
-          develop_ahead_by=$(gh api "repos/${{ github.repository }}/compare/develop...${commit_sha}" --jq '.ahead_by')
-          main_ahead_by=$(gh api "repos/${{ github.repository }}/compare/main...${commit_sha}" --jq '.ahead_by')
+          not_contained="[]"
+          midx=0
+          while [ "$midx" -lt "$marker_count" ]; do
+            entry=$(printf '%s' "$marker_releases" | jq -c --argjson i "$midx" '.[$i]')
+            midx=$((midx + 1))
+
+            tag_name=$(printf '%s' "$entry" | jq -r '.tag_name')
+            commit_sha=$(gh api "repos/firoorg/firo/commits/${tag_name}" --jq '.sha')
+            develop_ahead_by=$(gh api "repos/${{ github.repository }}/compare/develop...${commit_sha}" --jq '.ahead_by')
+            main_ahead_by=$(gh api "repos/${{ github.repository }}/compare/main...${commit_sha}" --jq '.ahead_by')
+
+            if [ "$develop_ahead_by" -eq 0 ] && [ "$main_ahead_by" -eq 0 ]; then
+              continue
+            fi
+
+            not_contained=$(printf '%s' "$not_contained" | jq -c \
+              --argjson entry "$entry" \
+              --argjson d "$develop_ahead_by" \
+              --argjson m "$main_ahead_by" \
+              '. + [$entry + {develop_ahead_by: $d, main_ahead_by: $m}]')
+          done
 
           title_prefix="Upstream consensus deadline:"
 
-          if [ "$develop_ahead_by" -eq 0 ] && [ "$main_ahead_by" -eq 0 ]; then
+          not_contained_count=$(printf '%s' "$not_contained" | jq 'length')
+          if [ "$not_contained_count" -eq 0 ]; then
+            tag_name=$(printf '%s' "$marker_releases" | jq -r 'sort_by(.published_at) | reverse | .[0].tag_name')
             echo "Fork already contains upstream release ${tag_name} on develop and main."
-            existing_number=$(gh api "repos/${{ github.repository }}/issues?state=open&per_page=100" \
-              | jq --arg prefix "$title_prefix" '[.[] | select(has("pull_request") | not) | select(.title | startswith($prefix))] | .[0].number // empty')
-            if [ -n "$existing_number" ]; then
-              gh api -X POST "repos/${{ github.repository }}/issues/${existing_number}/comments" \
-                -f body="The fork now contains upstream release ${tag_name} on develop and main." >/dev/null
-              set +e
-              gh api -X PATCH "repos/${{ github.repository }}/issues/${existing_number}" \
-                -f state=closed >/dev/null
-              close_status=$?
-              set -e
-              if [ "$close_status" -eq 0 ]; then
-                echo "Closed tracking issue #${existing_number} for upstream release ${tag_name}."
-              else
-                echo "Tracking issue #${existing_number} was not closed (it may already be closed)."
-              fi
+            existing_numbers=$(gh api "repos/${{ github.repository }}/issues?state=open&per_page=100" \
+              | jq -r --arg prefix "$title_prefix" '[.[] | select(has("pull_request") | not) | select(.title | startswith($prefix))] | .[].number')
+            if [ -n "$existing_numbers" ]; then
+              while IFS= read -r existing_number; do
+                [ -n "$existing_number" ] || continue
+                gh api -X POST "repos/${{ github.repository }}/issues/${existing_number}/comments" \
+                  -f body="The fork now contains upstream release ${tag_name} on develop and main." >/dev/null
+                set +e
+                gh api -X PATCH "repos/${{ github.repository }}/issues/${existing_number}" \
+                  -f state=closed >/dev/null
+                close_status=$?
+                set -e
+                if [ "$close_status" -eq 0 ]; then
+                  echo "Closed tracking issue #${existing_number} for upstream release ${tag_name}."
+                else
+                  echo "Tracking issue #${existing_number} was not closed (it may already be closed)."
+                fi
+              done <<< "$existing_numbers"
             fi
             exit 0
           fi
+
+          chosen=$(printf '%s' "$not_contained" | jq -c 'sort_by(.published_at) | reverse | .[0]')
+          tag_name=$(printf '%s' "$chosen" | jq -r '.tag_name')
+          html_url=$(printf '%s' "$chosen" | jq -r '.html_url')
+          published_at=$(printf '%s' "$chosen" | jq -r '.published_at')
+          deadline_height=$(printf '%s' "$chosen" | jq -r '.deadline_height')
+          is_hard_fork=$(printf '%s' "$chosen" | jq -r '.is_hard_fork')
+          develop_ahead_by=$(printf '%s' "$chosen" | jq -r '.develop_ahead_by')
+          main_ahead_by=$(printf '%s' "$chosen" | jq -r '.main_ahead_by')
 
           title="${title_prefix} ${tag_name}"
 
