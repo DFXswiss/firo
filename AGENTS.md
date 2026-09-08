@@ -184,7 +184,7 @@ The main workflow is `.github/workflows/ci-master.yml`.
 
 Current CI behavior:
 
-- Runs on pushes to all branches and PRs targeting `master`
+- Runs on pushes to `master` and PRs targeting `master`, `develop`, or `main`; the Guix/cross-compiled release job runs for `master` only
 - Ignores `doc/**` and `**/README.md`
 - Linux matrix: Release and Debug, with unit tests and RPC tests
 - Windows matrix: Release and Debug cross-builds on Ubuntu

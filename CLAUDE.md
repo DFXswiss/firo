@@ -201,7 +201,7 @@ The codebase is multi-threaded using `LOCK`/`TRY_LOCK` macros. Compile with `-DD
 ## CI/CD
 
 GitHub Actions (`.github/workflows/ci-master.yml`):
-- Triggers on pushes to all branches and PRs to master (ignores `doc/**` and `README.md`)
+- Triggers on pushes to `master` and PRs to `master`, `develop`, or `main` (ignores `doc/**` and `**/README.md`); Guix/cross-compiled release job runs for `master` only
 - **Linux** (ubuntu-22.04): Release + Debug builds, unit tests, RPC integration tests
 - **Windows** (cross-compile via MinGW): Release + Debug builds
 - **macOS** (macos-latest): Release + Debug builds

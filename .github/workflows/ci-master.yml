@@ -10,8 +10,11 @@ on:
     paths-ignore:
     - 'doc/**'
     - '**/README.md'
+    # Include develop and main so consensus-relevant changes get the extended RPC suite before merge.
     branches:
     - master
+    - develop
+    - main
 env:
   SOURCE_ARTIFACT: source
   SOURCE_ARTIFACT_DIR: source
@@ -299,6 +302,7 @@ jobs:
         qa/pull-tester/rpc-tests.py -extended
 
   guix-build:
+    if: github.event_name != 'pull_request' || github.base_ref == 'master'
     needs: get-commit-hash
     name: guix-${{ matrix.host }}
     runs-on: ubuntu-22.04
