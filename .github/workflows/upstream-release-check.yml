@@ -1,0 +1,143 @@
+name: Upstream release check
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "43 6 * * 1"
+  push:
+    branches: [develop]
+    paths:
+      - ".github/workflows/upstream-release-check.yml"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: Check upstream consensus deadline
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check upstream release for consensus deadline
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          releases_json=$(gh api "repos/firoorg/firo/releases?per_page=20")
+
+          tag_name=""
+          html_url=""
+          published_at=""
+          deadline_height=""
+          is_hard_fork=0
+          found=0
+
+          release_count=$(printf '%s' "$releases_json" | jq 'length')
+          idx=0
+          while [ "$idx" -lt "$release_count" ]; do
+            release_json=$(printf '%s' "$releases_json" | jq -c --argjson idx "$idx" '.[$idx]')
+            draft=$(printf '%s' "$release_json" | jq -r '.draft')
+            prerelease=$(printf '%s' "$release_json" | jq -r '.prerelease')
+            idx=$((idx + 1))
+            if [ "$draft" = "true" ] || [ "$prerelease" = "true" ]; then
+              continue
+            fi
+
+            cand_body=$(printf '%s' "$release_json" | jq -r '.body // ""')
+
+            cand_deadline_height=""
+            set +e
+            height_match=$(printf '%s' "$cand_body" | grep -oiE '(before|prior to) block [0-9][0-9,.]*')
+            height_status=$?
+            set -e
+            if [ "$height_status" -eq 0 ]; then
+              cand_deadline_height=$(printf '%s' "$height_match" | grep -oE '[0-9][0-9,.]*' | tr -d ',.' | head -n1)
+            elif [ "$height_status" -ne 1 ]; then
+              exit "$height_status"
+            fi
+
+            cand_is_hard_fork=0
+            if printf '%s' "$cand_body" | grep -qiE 'hard[[:space:]]?fork|hardfork'; then
+              cand_is_hard_fork=1
+            fi
+
+            if [ -z "$cand_deadline_height" ] && [ "$cand_is_hard_fork" -eq 0 ]; then
+              continue
+            fi
+
+            tag_name=$(printf '%s' "$release_json" | jq -r '.tag_name')
+            html_url=$(printf '%s' "$release_json" | jq -r '.html_url')
+            published_at=$(printf '%s' "$release_json" | jq -r '.published_at')
+            deadline_height=$cand_deadline_height
+            is_hard_fork=$cand_is_hard_fork
+            found=1
+            break
+          done
+
+          if [ "$found" -eq 0 ]; then
+            echo "No consensus deadline marker in recent upstream releases."
+            exit 0
+          fi
+
+          commit_sha=$(gh api "repos/firoorg/firo/commits/${tag_name}" --jq '.sha')
+          develop_ahead_by=$(gh api "repos/${{ github.repository }}/compare/develop...${commit_sha}" --jq '.ahead_by')
+          main_ahead_by=$(gh api "repos/${{ github.repository }}/compare/main...${commit_sha}" --jq '.ahead_by')
+
+          title_prefix="Upstream consensus deadline:"
+
+          if [ "$develop_ahead_by" -eq 0 ] && [ "$main_ahead_by" -eq 0 ]; then
+            echo "Fork already contains upstream release ${tag_name} on develop and main."
+            existing_number=$(gh api "repos/${{ github.repository }}/issues?state=open&per_page=100" \
+              | jq --arg prefix "$title_prefix" '[.[] | select(has("pull_request") | not) | select(.title | startswith($prefix))] | .[0].number // empty')
+            if [ -n "$existing_number" ]; then
+              gh api -X POST "repos/${{ github.repository }}/issues/${existing_number}/comments" \
+                -f body="The fork now contains upstream release ${tag_name} on develop and main." >/dev/null
+              set +e
+              gh api -X PATCH "repos/${{ github.repository }}/issues/${existing_number}" \
+                -f state=closed >/dev/null
+              close_status=$?
+              set -e
+              if [ "$close_status" -eq 0 ]; then
+                echo "Closed tracking issue #${existing_number} for upstream release ${tag_name}."
+              else
+                echo "Tracking issue #${existing_number} was not closed (it may already be closed)."
+              fi
+            fi
+            exit 0
+          fi
+
+          title="${title_prefix} ${tag_name}"
+
+          issue_body="Upstream release: ${tag_name}"$'\n'
+          if [ -n "$deadline_height" ]; then
+            issue_body+="Consensus deadline height: ${deadline_height}"$'\n'
+          fi
+          if [ "$is_hard_fork" -eq 1 ]; then
+            issue_body+="This release is labelled a hard fork."$'\n'
+          fi
+          issue_body+="Published: ${published_at}"$'\n'
+          issue_body+="Release: ${html_url}"$'\n'
+          if [ "$develop_ahead_by" -gt 0 ]; then
+            issue_body+="This fork's develop is ${develop_ahead_by} commits behind that release."$'\n'
+          fi
+          if [ "$main_ahead_by" -gt 0 ]; then
+            issue_body+="This fork's main is ${main_ahead_by} commits behind that release."$'\n'
+            issue_body+="A lagging main means the published image does not yet contain the release."
+          fi
+
+          existing_number=$(gh api "repos/${{ github.repository }}/issues?state=open&per_page=100" \
+            | jq --arg prefix "$title_prefix" '[.[] | select(has("pull_request") | not) | select(.title | startswith($prefix))] | .[0].number // empty')
+
+          if [ -n "$existing_number" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/${existing_number}" \
+              -f title="$title" \
+              -f body="$issue_body" >/dev/null
+            echo "Updated issue #${existing_number} for upstream release ${tag_name}."
+          else
+            gh api -X POST "repos/${{ github.repository }}/issues" \
+              -f title="$title" \
+              -f body="$issue_body" >/dev/null
+            echo "Opened issue for upstream release ${tag_name}."
+          fi
