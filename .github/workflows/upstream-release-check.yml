@@ -111,7 +111,7 @@ jobs:
             tag_name=$(printf '%s' "$marker_releases" | jq -r 'sort_by(.published_at) | reverse | .[0].tag_name')
             echo "Fork already contains upstream release ${tag_name} on develop and main."
             existing_numbers=$(gh api --paginate --slurp "repos/${{ github.repository }}/issues?state=open&per_page=100" \
-              | jq -r --arg prefix "$title_prefix" 'add | [.[] | select(has("pull_request") | not) | select(.user.login == "github-actions[bot]") | select(.title | startswith($prefix))] | .[].number')
+              | jq -r --arg prefix "$title_prefix" '(add // []) | [.[] | select(has("pull_request") | not) | select(.user.login == "github-actions[bot]") | select(.title | startswith($prefix))] | .[].number')
             if [ -n "$existing_numbers" ]; then
               while IFS= read -r existing_number; do
                 [ -n "$existing_number" ] || continue
@@ -134,36 +134,49 @@ jobs:
             exit 0
           fi
 
-          chosen=$(printf '%s' "$not_contained" | jq -c 'sort_by(.published_at) | reverse | .[0]')
-          tag_name=$(printf '%s' "$chosen" | jq -r '.tag_name')
-          html_url=$(printf '%s' "$chosen" | jq -r '.html_url')
-          published_at=$(printf '%s' "$chosen" | jq -r '.published_at')
-          deadline_height=$(printf '%s' "$chosen" | jq -r '.deadline_height')
-          is_hard_fork=$(printf '%s' "$chosen" | jq -r '.is_hard_fork')
-          develop_ahead_by=$(printf '%s' "$chosen" | jq -r '.develop_ahead_by')
-          main_ahead_by=$(printf '%s' "$chosen" | jq -r '.main_ahead_by')
+          # Earliest deadline height first; hard-fork-only (no height) entries last.
+          sorted=$(printf '%s' "$not_contained" | jq -c 'sort_by(if .deadline_height != "" then [0, (.deadline_height | tonumber)] else [1, .published_at] end)')
 
+          tag_name=$(printf '%s' "$sorted" | jq -r '.[0].tag_name')
           title="${title_prefix} ${tag_name}"
 
-          issue_body="Upstream release: ${tag_name}"$'\n'
-          if [ -n "$deadline_height" ]; then
-            issue_body+="Consensus deadline height: ${deadline_height}"$'\n'
-          fi
-          if [ "$is_hard_fork" -eq 1 ]; then
-            issue_body+="The release notes mention a hard fork."$'\n'
-          fi
-          issue_body+="Published: ${published_at}"$'\n'
-          issue_body+="Release: ${html_url}"$'\n'
-          if [ "$develop_ahead_by" -gt 0 ]; then
-            issue_body+="This fork's develop is ${develop_ahead_by} commits behind that release."$'\n'
-          fi
-          if [ "$main_ahead_by" -gt 0 ]; then
-            issue_body+="This fork's main is ${main_ahead_by} commits behind that release."$'\n'
-            issue_body+="A lagging main means the published image does not yet contain the release."
-          fi
+          issue_body=""
+          sidx=0
+          while [ "$sidx" -lt "$not_contained_count" ]; do
+            entry=$(printf '%s' "$sorted" | jq -c --argjson i "$sidx" '.[$i]')
+            sidx=$((sidx + 1))
+
+            entry_tag=$(printf '%s' "$entry" | jq -r '.tag_name')
+            entry_html_url=$(printf '%s' "$entry" | jq -r '.html_url')
+            entry_published_at=$(printf '%s' "$entry" | jq -r '.published_at')
+            entry_deadline_height=$(printf '%s' "$entry" | jq -r '.deadline_height')
+            entry_is_hard_fork=$(printf '%s' "$entry" | jq -r '.is_hard_fork')
+            entry_develop_ahead_by=$(printf '%s' "$entry" | jq -r '.develop_ahead_by')
+            entry_main_ahead_by=$(printf '%s' "$entry" | jq -r '.main_ahead_by')
+
+            if [ -n "$issue_body" ]; then
+              issue_body+=$'\n'
+            fi
+            issue_body+="Upstream release: ${entry_tag}"$'\n'
+            if [ -n "$entry_deadline_height" ]; then
+              issue_body+="Consensus deadline height: ${entry_deadline_height}"$'\n'
+            fi
+            if [ "$entry_is_hard_fork" -eq 1 ]; then
+              issue_body+="The release notes mention a hard fork."$'\n'
+            fi
+            issue_body+="Published: ${entry_published_at}"$'\n'
+            issue_body+="Release: ${entry_html_url}"$'\n'
+            if [ "$entry_develop_ahead_by" -gt 0 ]; then
+              issue_body+="This fork's develop is ${entry_develop_ahead_by} commits behind that release."$'\n'
+            fi
+            if [ "$entry_main_ahead_by" -gt 0 ]; then
+              issue_body+="This fork's main is ${entry_main_ahead_by} commits behind that release."$'\n'
+              issue_body+="A lagging main means the published image does not yet contain the release."$'\n'
+            fi
+          done
 
           existing_number=$(gh api --paginate --slurp "repos/${{ github.repository }}/issues?state=open&per_page=100" \
-            | jq --arg prefix "$title_prefix" 'add | [.[] | select(has("pull_request") | not) | select(.user.login == "github-actions[bot]") | select(.title | startswith($prefix))] | .[0].number // empty')
+            | jq --arg prefix "$title_prefix" '(add // []) | [.[] | select(has("pull_request") | not) | select(.user.login == "github-actions[bot]") | select(.title | startswith($prefix))] | .[0].number // empty')
 
           if [ -n "$existing_number" ]; then
             gh api -X PATCH "repos/${{ github.repository }}/issues/${existing_number}" \
