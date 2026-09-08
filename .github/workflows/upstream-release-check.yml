@@ -45,6 +45,8 @@ jobs:
             fi
 
             cand_body=$(printf '%s' "$release_json" | jq -r '.body // ""')
+            # Collapse whitespace (including newlines) so line-wrapped markers still match.
+            cand_body=$(printf '%s' "$cand_body" | tr -s '[:space:]' ' ')
 
             cand_deadline_height=""
             set +e
@@ -117,12 +119,14 @@ jobs:
                 set +e
                 gh api -X PATCH "repos/${{ github.repository }}/issues/${existing_number}" \
                   -f state=closed >/dev/null
-                close_status=$?
                 set -e
-                if [ "$close_status" -eq 0 ]; then
+                # Distinguish "already closed" from a failed close: read state back.
+                issue_state=$(gh api "repos/${{ github.repository }}/issues/${existing_number}" --jq '.state')
+                if [ "$issue_state" = "closed" ]; then
                   echo "Closed tracking issue #${existing_number} for upstream release ${tag_name}."
                 else
-                  echo "Tracking issue #${existing_number} was not closed (it may already be closed)."
+                  echo "Failed to close tracking issue #${existing_number} (state=${issue_state})." >&2
+                  exit 1
                 fi
               done <<< "$existing_numbers"
             fi
