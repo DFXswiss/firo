@@ -25,7 +25,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          releases_json=$(gh api "repos/firoorg/firo/releases?per_page=20")
+          releases_json=$(gh api "repos/firoorg/firo/releases?per_page=100")
 
           tag_name=""
           html_url=""
@@ -49,7 +49,7 @@ jobs:
 
             cand_deadline_height=""
             set +e
-            height_match=$(printf '%s' "$cand_body" | grep -oiE '(before|prior to) block [0-9][0-9,.]*')
+            height_match=$(printf '%s' "$cand_body" | grep -oiE '(before|prior to)([[:space:]]+(block|height)){1,2}[[:space:]]*#?[0-9][0-9,.]*')
             height_status=$?
             set -e
             if [ "$height_status" -eq 0 ]; then
@@ -59,7 +59,7 @@ jobs:
             fi
 
             cand_is_hard_fork=0
-            if printf '%s' "$cand_body" | grep -qiE 'hard[[:space:]]?fork|hardfork'; then
+            if printf '%s' "$cand_body" | grep -qiE 'hard[[:space:]-]?fork|hardfork'; then
               cand_is_hard_fork=1
             fi
 
@@ -115,7 +115,7 @@ jobs:
             issue_body+="Consensus deadline height: ${deadline_height}"$'\n'
           fi
           if [ "$is_hard_fork" -eq 1 ]; then
-            issue_body+="This release is labelled a hard fork."$'\n'
+            issue_body+="The release notes mention a hard fork."$'\n'
           fi
           issue_body+="Published: ${published_at}"$'\n'
           issue_body+="Release: ${html_url}"$'\n'
